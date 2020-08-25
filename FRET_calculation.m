@@ -5,33 +5,36 @@ clc
 %% Input information
 % Check the correction factors and field resolution
 
-filenum = input('File name? (e.g. iAM382.csv)\n', 's');
-Dye = input('Type of dyes? (e.g. Acceptor or Donor or Both)\n', 's');
+filenum = input('File name? (e.g. iAM382  the file extension is implicitly .csv)\n', 's');
+Dye = input('Type of dyes? (e.g. D for Donor, A for Acceptor and B for Both)\n', 's');
 
-color = input('Which dyes? (C for Cy3-Cy5 and A for a488-a594)\n', 's');
+color = input('Which dyes? (C for Cy3-Cy5, A for a488-a594 or D for deconvolution of a488-a594)\n', 's');
 
 if strcmpi(color, 'C')
     color={'Cy5'; 'tmr'; 'tmrfret'};
 elseif strcmpi(color, 'A')
     color={'a594'; 'a488'; 'a594fret'};
+elseif strcmpi(color, 'D')
+    color={'dw_a594'; 'dw_a488'; 'dw_a594fret'};
 end
 
 Correction = input('Correct images? (y/n)\n', 's');
 
 if strcmpi(Correction, 'y')
-    CorrDonor = input('Correction ratio for Donor intensity? (e.g. for Cy3 is 0.278 and a488 is 0.085)\n');
-    CorrAcceptor = input('Correction ratio for Acceptor intensity? (e.g. for Cy5 is 0.09 and a594 is 0.056)\n');
+    CorrDonor = input('Correction ratio for Donor intensity? (e.g. for Cy3 is 0.278, a488 is 0.085 and dw_a488 is 0.0605)\n');
+    CorrAcceptor = input('Correction ratio for Acceptor intensity? (e.g. for Cy5 is 0.09, a594 is 0.056 and dw_594 is 0.0637)\n');
 end
 
-disp('If there is a group of dots at a distance lower than 2 µm, only the brigher dot is considered.')
+disp('If there is a group of dots at a distance lower than 2 Âµm, only the brigher dot is considered.')
 disp('Dots with aberrant intensity values are removed. (e.g. 10000 when normal is 10)')
 MinDots = input('Minimum dots in a nuclei? (1 to consider all nuclei and 2 to remove possible male cells)\n');
 
 %% Extract data from file
 
-ID = readtable(filenum);
+ID = readtable([filenum '.csv']);
 
 Allele = [];
+NSNR = [];
 
 % Reading the number of the last field from the long extension
 LastIndex = strsplit(ID.File{length(ID.File)},'/');
@@ -55,15 +58,20 @@ for Fields = 1:str2double(LastIndex{1})
     for n = 1:length(nuclei)
         PositionNuclei = PositionFile(eq(nuclei(n), ID.Nuclei(PositionFile))); % Select current nuclei
         
-        Allele = [Allele; get_Intensity(ID.Channel(PositionNuclei), ID.Value(PositionNuclei), ...
-            [ID.x(PositionNuclei)*0.13, ID.y(PositionNuclei)*0.13, ID.z(PositionNuclei)*0.3], Dye, color, MinDots)];
+        preSNR = ID.NSNR(PositionNuclei(strcmp(ID.Channel(PositionNuclei), color(3))));
+        [I, preSNR] = get_Intensity(ID.Channel(PositionNuclei), ID.Value(PositionNuclei), ...
+            [ID.x(PositionNuclei)*0.13, ID.y(PositionNuclei)*0.13, ID.z(PositionNuclei)*0.3], Dye, color, MinDots, preSNR);
+        
+        NSNR = [NSNR; preSNR];
+        
+        Allele = [Allele; I];
     end
 end
 
 %% Calculate FRET efficiency
 
 % Correct intensity contribution from donor and acceptor channels
-if strcmp(Dye, 'Both') && strcmpi(Correction, 'y')
+if strcmp(Dye, 'B') && strcmpi(Correction, 'y')
     Allele(:, 3) = Allele(:, 3) - Allele(:, 2)*CorrDonor - Allele(:, 1)*CorrAcceptor;
 end
 
@@ -77,42 +85,78 @@ EfficiencyFRET = Allele(:, 3)./(Allele(:, 3)+Allele(:, 2));
 
 figure
 subplot(2, 2, 1)
-histogram(Allele(:, 1), 20)
+histogram(Allele(:, 1), 50)
 xlabel('Acceptor Intensity')
 legend(num2str(sum(~isnan(Allele(:, 1)))))
 title(['median = ' num2str(round(nanmedian(Allele(:, 1)), 2))])
 
 subplot(2, 2, 2)
-histogram(Allele(:, 2), 20)
+histogram(Allele(:, 2), 50)
 legend(num2str(sum(~isnan(Allele(:, 2)))))
 xlabel('Donor Intensity')
 title(['median = ' num2str(round(nanmedian(Allele(:, 2)), 2))])
 
 subplot(2, 2, 3)
-histogram(Allele(:, 3), 20)
+histogram(Allele(:, 3), 50)
 legend(num2str(sum(~isnan(Allele(:, 3)))))
 xlabel('FRET Intensity')
 title(['median = ' num2str(round(nanmedian(Allele(:, 3)), 2))])
 
+% Depends of which sample selected wether calculates efficiency or ratio
 subplot(2, 2, 4)
-% Only consider the ratio comparison with the channel active
-if strcmp(Dye, 'Donor')
+if strcmp(Dye, 'D')
     histogram(RatioFRETdonor, 30)
     legend(num2str(sum(~isnan(RatioFRETdonor))))
     xlabel('FRET ratio with Donor')
-    title(['median = ' num2str(round(nanmedian(RatioFRETacceptor), 2))])
+    title(['median = ' num2str(round(nanmedian(RatioFRETdonor), 3))])
     
-elseif strcmp(Dye, 'Acceptor')
+elseif strcmp(Dye, 'A')
     histogram(RatioFRETacceptor, 30)
     legend(num2str(sum(~isnan(RatioFRETacceptor))))
     xlabel('FRET ratio with Acceptor')
-    title(['median = ' num2str(round(nanmedian(RatioFRETacceptor), 2))])
+    title(['median = ' num2str(round(nanmedian(RatioFRETacceptor), 23))])
 
-elseif strcmp(Dye, 'Both')  
+elseif strcmp(Dye, 'B')  
     histogram(EfficiencyFRET, 50)
     legend(num2str(sum(~isnan(EfficiencyFRET))))
     xlabel('FRET Efficiency')
     title(['median = ' num2str(round(nanmedian(EfficiencyFRET)*100, 1)) ' %'])
+end
+
+%% plot Ratio by no NSNR restriction or with <3 filter
+if strcmp(Dye, 'A')
+    figure
+    subplot(1, 2, 1)
+    scatter(NSNR, RatioFRETacceptor, 30, 'filled','MarkerFaceAlpha',0.6)
+    xlabel('NSNR FRET')
+    ylabel('FRET ratio with Acceptor')
+    title(['median = ' num2str(nanmedian(RatioFRETacceptor))])
+    grid
+    
+    subplot(1, 2, 2)
+    scatter(NSNR(NSNR>3), RatioFRETacceptor(NSNR>3), 30, 'filled','MarkerFaceAlpha',0.6)
+    xlabel('NSNR FRET')
+    ylabel('FRET ratio with Acceptor')
+    title(['median = ' num2str(nanmedian(RatioFRETacceptor(NSNR>3)))])
+    legend(num2str(length(NSNR(NSNR>3))))
+    grid
+    
+elseif strcmp(Dye, 'D')
+    figure
+    subplot(1, 2, 1)
+    scatter(NSNR, RatioFRETdonor, 30, 'filled','MarkerFaceAlpha',0.6)
+    xlabel('NSNR FRET')
+    ylabel('FRET ratio with Acceptor')
+    title(['median = ' num2str(nanmedian(RatioFRETdonor))])
+    grid
+    
+    subplot(1, 2, 2)
+    scatter(NSNR(NSNR>3), RatioFRETdonor(NSNR>3), 30, 'filled','MarkerFaceAlpha',0.6)
+    xlabel('NSNR FRET')
+    ylabel('FRET ratio with Donor')
+    title(['median = ' num2str(nanmedian(RatioFRETdonor(NSNR>3)))])
+    legend(num2str(length(NSNR(NSNR>3))))
+    grid
 end
 
 
@@ -123,11 +167,7 @@ end
 
 
 
-
-
-
-
-function Intensity = get_Intensity(Channel, Values, position, Dye, color, MinDots)
+function [Intensity, SNR] = get_Intensity(Channel, Values, position, Dye, color, MinDots, SNR)
 % Remove dots positioned too close and consider only the brightest
 % Remove values higher than 10^4
 % Associate the correct dots from different channels
@@ -144,7 +184,7 @@ for i = 1:3
         
         P = position(strcmp(Channel, color(i)), :);
         Distance = triu(squareform(pdist(P)));    
-        [a, b] = find(Distance < 2.0 & Distance ~= 0); % 2µm as the threshold
+        [a, b] = find(Distance < 0.0 & Distance ~= 0); % 2Âµm as the threshold
         
         if ~isempty(a)
             %find minimum Intensity value and relate with current channel position then to the general positions
@@ -163,34 +203,51 @@ end
 % superior to one means that excludes nuclei with only 1 dot (male cells)
 if sum(~isnan(Intensity(:, 3))) >= MinDots % It's not enough, should be a way to unconsider one unpaired case
     
-    if strcmp(Dye, 'Acceptor') && sum(~isnan(Intensity(:, 1))) >= MinDots  
+    if strcmp(Dye, 'A') && sum(~isnan(Intensity(:, 1))) >= MinDots && (sum(strcmp(Channel, color(1))) == sum(strcmp(Channel, color(3)))) 
         Intensity(:, 2) = nan;
         
-        Intensity = closestDot(position(strcmp(Channel, color(1)), :), ...
-            position(strcmp(Channel, color(3)), :), Intensity, 1);
-    
+        Intensity(all(isnan(Intensity), 2), :) = [];
         
-    elseif strcmp(Dye, 'Donor') && sum(~isnan(Intensity(:, 2))) >= MinDots
+        [~, i] = sort(sum(position(strcmp(Channel, color(1)), :), 2));
+        Intensity(:, 1) = Intensity(i, 1);
+        [~, i] = sort(sum(position(strcmp(Channel, color(3)), :), 2));
+        Intensity(:, 3) = Intensity(i, 3);
+    
+        SNR = SNR(i);
+        
+    elseif strcmp(Dye, 'D') && sum(~isnan(Intensity(:, 2))) >= MinDots  && (sum(strcmp(Channel, color(2))) == sum(strcmp(Channel, color(3))))
         Intensity(:, 1) = nan;
         
-        Intensity = closestDot(position(strcmp(Channel, color(2)), :), ...
-            position(strcmp(Channel, color(3)), :), Intensity, 2);
+        Intensity(all(isnan(Intensity), 2), :) = [];
         
+        [~, i] = sort(sum(position(strcmp(Channel, color(2)), :), 2));
+        Intensity(:, 2) = Intensity(i, 2);
+        [~, i] = sort(sum(position(strcmp(Channel, color(3)), :), 2));
+        Intensity(:, 3) = Intensity(i, 3);
         
-    elseif strcmp(Dye, 'Both') && sum(~isnan(Intensity(:, 2))) >= MinDots && sum(~isnan(Intensity(:, 1))) >= MinDots
+        SNR = SNR(i);
         
-        Intensity = closestDot(position(strcmp(Channel, color(2)), :), ...
-            position(strcmp(Channel, color(3)), :), Intensity, 2);
+    elseif strcmp(Dye, 'B') && sum(~isnan(Intensity(:, 2))) >= MinDots && sum(~isnan(Intensity(:, 1))) >= MinDots  && (sum(strcmp(Channel, color(2))) == sum(strcmp(Channel, color(3)))) && (sum(strcmp(Channel, color(1))) == sum(strcmp(Channel, color(3))))
         
-        Intensity = closestDot(position(strcmp(Channel, color(1)), :), ...
-            position(strcmp(Channel, color(3)), :), Intensity, 1);
+        Intensity(all(isnan(Intensity), 2), :) = [];
+        
+        [~, i] = sort(sum(position(strcmp(Channel, color(1)), :), 2));
+        Intensity(:, 1) = Intensity(i, 1);
+        [~, i] = sort(sum(position(strcmp(Channel, color(2)), :), 2));
+        Intensity(:, 2) = Intensity(i, 2);
+        [~, i] = sort(sum(position(strcmp(Channel, color(3)), :), 2));
+        Intensity(:, 3) = Intensity(i, 3);
+        
+        SNR = SNR(i);
     
     else
         Intensity = nan(9, 3);
+        SNR = nan(9, 1);
     end
     
 else
     Intensity = nan(9, 3);
+    SNR = nan(9, 1);
 end
 
 
@@ -198,15 +255,3 @@ if any(any(Intensity==0))
     disp('problem')
 end
 end
-
-
-
- function Intensity = closestDot(AorD, FRET, Intensity, num)
-        AorD = sum(AorD, 2);
-        FRET = sum(FRET, 2);
-        
-        A = repmat(AorD, 1, length(FRET));
-        [~,closestIndex] = min(abs(A-FRET'));
-        
-        Intensity(closestIndex, num)=Intensity(1:length(closestIndex), num);
- end
